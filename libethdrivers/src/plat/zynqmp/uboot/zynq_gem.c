@@ -419,6 +419,25 @@ static int zynq_gem_miiphy_write(const char *devname, uchar addr,
     return phywrite(dev, addr, reg, val);
 }
 
+static char
+hexchar(unsigned int v)
+{
+    return v < 10 ? '0' + v : ('a' - 10) + v;
+}
+
+static void
+dump_mac(void *packet_ptr)
+{
+    uint8_t *packet = (uint8_t *) packet_ptr;
+    for (unsigned i = 0; i < 6; i++) {
+        putchar(hexchar((packet[i] >> 4) & 0xf));
+        putchar(hexchar(packet[i] & 0xf));
+        if (i < 5) {
+            putchar(' ');
+        }
+    } 
+    printf("\n");
+}
 struct eth_device *zynq_gem_initialize(phys_addr_t base_addr,
                                        int phy_addr, u32 emio)
 {
@@ -471,6 +490,8 @@ struct eth_device *zynq_gem_initialize(phys_addr_t base_addr,
         memcpy(dev->enetaddr, ZYNQ_DEFAULT_MAC, 6);
     }
 
+    printf("|zynq|Mac\n");
+    dump_mac(dev->enetaddr);
 
     miiphy_register(dev->name, zynq_gem_miiphyread, zynq_gem_miiphy_write);
     priv->bus = miiphy_get_dev_by_name(dev->name);

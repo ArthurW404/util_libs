@@ -42,6 +42,26 @@ struct zynqmp_eth_data {
     unsigned int rdt, rdh, tdt, tdh;
 };
 
+static char
+hexchar(unsigned int v)
+{
+    return v < 10 ? '0' + v : ('a' - 10) + v;
+}
+
+static void
+dump_packet(void *packet_ptr, int len)
+{
+    uint8_t *packet = (uint8_t *) packet_ptr;
+    for (unsigned i = 0; i < len; i++) {
+        putchar(hexchar((packet[i] >> 4) & 0xf));
+        putchar(hexchar(packet[i] & 0xf));
+        if (i < len - 1) {
+            putchar(' ');
+        }
+    } 
+    printf("\n");
+}
+
 static void free_desc_ring(struct zynqmp_eth_data *dev, ps_dma_man_t *dma_man)
 {
 
@@ -80,6 +100,7 @@ static int initialize_desc_ring(struct zynqmp_eth_data *dev, ps_dma_man_t *dma_m
     }
 
     dev->rx_ring = rx_ring.virt;
+    // dev->rx_ring_phys = (uintptr_t) rx_ring.virt;
     dev->rx_ring_phys = rx_ring.phys;
     dma_addr_t tx_ring = dma_alloc_pin(dma_man, sizeof(struct emac_bd) * dev->tx_size, 0, ARCH_DMA_MINALIGN);
     if (!tx_ring.phys) {
@@ -116,6 +137,7 @@ static int initialize_desc_ring(struct zynqmp_eth_data *dev, ps_dma_man_t *dma_m
 
     dev->tx_ring = tx_ring.virt;
     dev->tx_ring_phys = tx_ring.phys;
+    // dev->tx_ring_phys = (uintptr_t) tx_ring.virt;
 
     /* Remaining needs to be 2 less than size as we cannot actually enqueue size many descriptors,
      * since then the head and tail pointers would be equal, indicating empty. */
@@ -189,6 +211,7 @@ static void fill_rx_bufs(struct eth_driver *driver)
 
 static void complete_rx(struct eth_driver *eth_driver)
 {
+    printf("Complete rx called\n");
     struct zynqmp_eth_data *dev = (struct zynqmp_eth_data *)eth_driver->eth_data;
     unsigned int rdt = dev->rdt;
 
@@ -221,7 +244,8 @@ static void complete_rx(struct eth_driver *eth_driver)
 }
 
 static void complete_tx(struct eth_driver *driver)
-{
+{   
+    printf("|eth driver| complete tx called!\n");
     struct zynqmp_eth_data *dev = (struct zynqmp_eth_data *)driver->eth_data;
 
     while (dev->tdh != dev->tdt) {
@@ -267,6 +291,7 @@ static void handle_irq(struct eth_driver *driver, int irq)
     writel(isr, &regs->isr);
 
     if (isr & ZYNQ_GEM_IXR_TXCOMPLETE) {
+        printf("|handle_irq| ZYNQ_GEM_IXR_TXCOMPLETE\n");
         /* Clear TX Status register */
         u32 val = readl(&regs->txsr);
         writel(val, &regs->txsr);
@@ -275,6 +300,7 @@ static void handle_irq(struct eth_driver *driver, int irq)
     }
 
     if (isr & ZYNQ_GEM_IXR_FRAMERX) {
+        printf("|handle_irq| ZYNQ_GEM_IXR_FRAMERX\n");
         /* Clear RX Status register */
         u32 val = readl(&regs->rxsr);
         writel(val, &regs->rxsr);
@@ -361,6 +387,7 @@ static int raw_tx(struct eth_driver *driver, unsigned int num, uintptr_t *phys, 
 
 static void raw_poll(struct eth_driver *driver)
 {
+    printf("|raw_poll| called\n");
     complete_rx(driver);
     complete_tx(driver);
     fill_rx_bufs(driver);
@@ -483,6 +510,7 @@ static int allocate_register_callback(pmem_region_t pmem, unsigned curr_num, siz
 
     callback_args_t *args = token;
     if (curr_num == 0) {
+        printf("|zynqmp driver| memory = 0x%x\n", pmem.base_addr);
         args->addr = ps_pmem_map(args->io_ops, pmem, false, PS_MEM_NORMAL);
         if (!args->addr) {
             ZF_LOGE("Failed to map the Ethernet device");
@@ -492,6 +520,24 @@ static int allocate_register_callback(pmem_region_t pmem, unsigned curr_num, siz
 
     return 0;
 }
+
+
+/* This is a platsuport IRQ interface IRQ handler wrapper for handle_irq() */
+static void smmu_irq_handle(void *data, ps_irq_acknowledge_fn_t acknowledge_fn, void *ack_data)
+{
+    ZF_LOGF_IF(data == NULL, "Passed in NULL for the data");
+    struct eth_driver *driver = data;
+
+    printf("SMMU\n");
+    /* handle_irq doesn't really expect an IRQ number */
+    // handle_irq(driver, 0);
+
+    int error = acknowledge_fn(ack_data);
+    if (error) {
+        LOG_ERROR("Failed to acknowledge the Ethernet device's IRQ");
+    }
+}
+
 
 static int allocate_irq_callback(ps_irq_t irq, unsigned curr_num, size_t num_irqs, void *token)
 {
@@ -507,6 +553,14 @@ static int allocate_irq_callback(ps_irq_t irq, unsigned curr_num, size_t num_irq
             ZF_LOGE("Failed to register the Ethernet device's IRQ");
             return -EIO;
         }
+        // printf("|eth driver|irq = %d\n", irq.irq);
+        // ps_irq_t smmu_irq = {.type = PS_INTERRUPT, .irq = 155 + 32};
+        // // hacking smmu irq
+        // int irq_id = ps_irq_register(&args->io_ops->irq_ops, smmu_irq, smmu_irq_handle, args->eth_driver);
+        // if (irq_id < 0) {
+        //     ZF_LOGE("Failed to register the SMMU device's IRQ");
+        //     return -EIO;
+        // }
     }
 
     return 0;
@@ -564,7 +618,7 @@ int ethif_zynqmp_init_module(ps_io_ops_t *io_ops, const char *dev_path)
 }
 
 static const char *compatible_strings[] = {
-    "cdns,zynq-gem",
+    "cdns,zynqmp-gem",
     "cdns,gem",
     NULL
 };
